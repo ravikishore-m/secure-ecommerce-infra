@@ -1,0 +1,26 @@
+apiVersion: operator.tigera.io/v1
+kind: Installation
+metadata:
+  name: default
+spec:
+  variant: Calico
+  calicoNetwork:
+    bgp: Disabled
+    ipPools:
+      - blockSize: 26
+        cidr: 100.64.0.0/12
+        encapsulation: VXLAN
+        natOutgoing: Enabled
+        nodeSelector: all()
+  nodeAddressAutodetectionV4:
+    useNodeInternalIP: true
+  flexVolumePath: /var/lib/kubelet/volumeplugins
+---
+apiVersion: operator.tigera.io/v1
+kind: APIServer
+metadata:
+  name: default
+spec:
+  service:
+    type: ClusterIP
+

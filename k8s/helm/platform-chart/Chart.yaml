@@ -1,0 +1,8 @@
+apiVersion: v2
+name: ecommerce-platform
+description: Secure ecommerce microservices baseline
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+dependencies: []
+

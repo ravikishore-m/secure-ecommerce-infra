@@ -1,0 +1,43 @@
+{{- if and .Values.networkPolicy.enabled .Values.networkPolicy.serviceGraph }}
+{{- range $svc, $deps := .Values.networkPolicy.serviceGraph }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "ecommerce-platform.fullname" $ }}-{{ $svc }}-graph
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $svc }}
+      app.kubernetes.io/instance: {{ $.Release.Name }}
+  policyTypes:
+    - Ingress
+  ingress:
+    {{- if not $deps }}
+    - from:
+        {{- range $.Values.networkPolicy.ingressCidrs }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+      ports:
+        - port: 80
+          protocol: TCP
+    {{- end }}
+    {{- if $deps }}
+    - from:
+        {{- range $deps }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $.Release.Namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ . }}
+              app.kubernetes.io/instance: {{ $.Release.Name }}
+        {{- end }}
+      ports:
+        - port: 80
+          protocol: TCP
+    {{- end }}
+---
+{{- end }}
+{{- end }}
+

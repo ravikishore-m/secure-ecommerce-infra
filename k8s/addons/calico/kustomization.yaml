@@ -1,0 +1,4 @@
+resources:
+  - https://raw.githubusercontent.com/projectcalico/calico/v3.27.2/manifests/tigera-operator.yaml
+  - custom-resources.yaml
+

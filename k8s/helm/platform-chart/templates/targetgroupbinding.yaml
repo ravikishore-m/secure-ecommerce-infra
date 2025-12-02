@@ -1,0 +1,18 @@
+{{- if and .Values.ingressBindings.enabled .Values.ingressBindings.targetGroups }}
+{{- range $svc, $arn := .Values.ingressBindings.targetGroups }}
+{{- if $arn }}
+apiVersion: elbv2.k8s.aws/v1beta1
+kind: TargetGroupBinding
+metadata:
+  name: {{ include "ecommerce-platform.fullname" $ }}-{{ $svc }}
+spec:
+  targetGroupARN: {{ $arn }}
+  serviceRef:
+    name: {{ include "ecommerce-platform.fullname" $ }}-{{ $svc }}
+    port: {{ (index $.Values.services $svc).containerPort | default 80 }}
+  targetType: ip
+---
+{{- end }}
+{{- end }}
+{{- end }}
+

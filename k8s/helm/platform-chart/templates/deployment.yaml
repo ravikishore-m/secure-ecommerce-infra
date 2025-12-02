@@ -1,0 +1,87 @@
+{{- range $name, $svc := .Values.services }}
+{{- $workload := default "deployment" $svc.workload }}
+{{- if eq $workload "deployment" }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ecommerce-platform.fullname" $ }}-{{ $name }}
+  labels:
+    app.kubernetes.io/name: {{ $name }}
+    app.kubernetes.io/instance: {{ $.Release.Name }}
+    app.kubernetes.io/component: api
+spec:
+  replicas: {{ $svc.replicaCount | default 2 }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $name }}
+      app.kubernetes.io/instance: {{ $.Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ $name }}
+        app.kubernetes.io/instance: {{ $.Release.Name }}
+    spec:
+      serviceAccountName: {{ include "ecommerce-platform.serviceAccountName" $ }}
+      securityContext:
+        {{- toYaml $.Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ $name }}
+          image: "{{ $.Values.global.imageRegistry }}/{{ $svc.image.repository }}:{{ $svc.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: {{ $svc.containerPort }}
+              name: http
+          env:
+            - name: SERVICE_NAME
+              value: {{ $name | quote }}
+            - name: NODE_ENV
+              value: {{ $.Values.global.environment | default "production" | quote }}
+            - name: DATABASE_HOST
+              value: {{ $.Values.database.host | quote }}
+            - name: DATABASE_PORT
+              value: {{ $.Values.database.port | quote }}
+            - name: DATABASE_NAME
+              value: {{ $.Values.database.name | quote }}
+            - name: DATABASE_USER
+              value: {{ $.Values.database.user | quote }}
+            - name: DATABASE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $.Values.database.secretName | quote }}
+                  key: password
+            {{- if eq $name "login" }}
+            - name: COGNITO_REGION
+              value: {{ $.Values.cognito.region | quote }}
+            - name: COGNITO_USER_POOL_ID
+              value: {{ $.Values.cognito.userPoolId | quote }}
+            - name: COGNITO_CLIENT_ID
+              value: {{ $.Values.cognito.clientId | quote }}
+            {{- end }}
+            {{- if eq $name "orders" }}
+            - name: INVENTORY_URL
+              value: {{ printf "http://%s-inventory" (include "ecommerce-platform.fullname" $) | quote }}
+            - name: PAYMENTS_URL
+              value: {{ printf "http://%s-payments" (include "ecommerce-platform.fullname" $) | quote }}
+            {{- end }}
+            {{- if $svc.env }}
+            {{- toYaml $svc.env | nindent 12 }}
+            {{- end }}
+          resources:
+            {{- toYaml ($svc.resources | default $.Values.defaultResources) | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          securityContext:
+            {{- toYaml $.Values.securityContext | nindent 12 }}
+---
+{{- end }}
+{{- end }}

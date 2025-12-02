@@ -1,0 +1,12 @@
+node_modules
+.terraform
+*.tfstate
+*.tfstate.*
+.terraform.lock.hcl
+tfplan
+dist
+frontend/node_modules
+*.DS_Store
+.idea
+.vscode
+

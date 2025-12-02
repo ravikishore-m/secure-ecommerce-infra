@@ -1,0 +1,135 @@
+global:
+  imageRegistry: "<account>.dkr.ecr.<region>.amazonaws.com"
+  environment: nonprod
+  domain: app.nonprod.demo.ecommerce-example.com
+  tlsSecretName: ingress-cert
+
+defaultResources:
+  requests:
+    cpu: 200m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+database:
+  host: "ecommerce-db.nonprod.example"
+  port: "5432"
+  name: "ecommerce"
+  user: "appadmin"
+  password: "ChangeMe123!"
+  createSecret: true
+  secretName: ecommerce-db
+
+cognito:
+  region: us-east-1
+  userPoolId: ""
+  clientId: ""
+
+services:
+  frontend:
+    replicaCount: 2
+    workload: deployment
+    image:
+      repository: frontend
+      tag: v1.0.0
+    containerPort: 80
+  login:
+    replicaCount: 2
+    workload: deployment
+    image:
+      repository: login
+      tag: v1.0.0
+    containerPort: 3000
+    resources:
+      requests:
+        cpu: 150m
+        memory: 256Mi
+      limits:
+        cpu: 300m
+        memory: 512Mi
+  orders:
+    replicaCount: 2
+    workload: statefulset
+    image:
+      repository: orders
+      tag: v1.0.0
+    containerPort: 3000
+  payments:
+    replicaCount: 2
+    workload: deployment
+    image:
+      repository: payments
+      tag: v1.0.0
+    containerPort: 3000
+  inventory:
+    replicaCount: 2
+    workload: deployment
+    image:
+      repository: inventory
+      tag: v1.0.0
+    containerPort: 3000
+  catalog:
+    replicaCount: 2
+    workload: deployment
+    image:
+      repository: catalog
+      tag: v1.0.0
+    containerPort: 3000
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPU: 60
+
+serviceAccount:
+  create: true
+  annotations: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+networkPolicy:
+  enabled: true
+  allowedNamespaces:
+    - observability
+    - monitoring
+    - istio-system
+  ingressCidrs:
+    - 10.0.0.0/8
+  serviceGraph:
+    frontend: []
+    login: []
+    orders:
+      - login
+    payments:
+      - orders
+    inventory:
+      - orders
+    catalog:
+      - login
+
+monitoring:
+  enabled: true
+  scrapeInterval: 30s
+
+ingressBindings:
+  enabled: false
+  targetGroups:
+    frontend: ""
+    login: ""
+    orders: ""
+    payments: ""
+    inventory: ""
+    catalog: ""
+

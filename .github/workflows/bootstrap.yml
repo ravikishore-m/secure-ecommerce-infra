@@ -1,0 +1,81 @@
+name: bootstrap
+
+on:
+  push:
+    paths:
+      - "base-infrastructure-bootstrap/**"
+      - ".github/workflows/bootstrap.yml"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        default: "nonprod"
+        type: choice
+        options:
+          - nonprod
+          - prod
+      action:
+        description: "Plan or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options:
+          - plan
+          - apply
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  TF_IN_AUTOMATION: true
+  TF_INPUT: false
+
+jobs:
+  plan-on-push:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        environment: [nonprod, prod]
+    defaults:
+      run:
+        working-directory: base-infrastructure-bootstrap/terraform/envs/${{ matrix.environment }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.7.5
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ matrix.environment == 'prod' && secrets.AWS_PROD_TERRAFORM_ROLE || secrets.AWS_NONPROD_TERRAFORM_ROLE }}
+          aws-region: us-east-1
+      - run: terraform init -upgrade
+      - run: terraform validate
+      - run: terraform plan -out=tfplan
+
+  manual:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-22.04
+    environment: ${{ inputs.environment }}
+    defaults:
+      run:
+        working-directory: base-infrastructure-bootstrap/terraform/envs/${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.7.5
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ inputs.environment == 'prod' && secrets.AWS_PROD_TERRAFORM_ROLE || secrets.AWS_NONPROD_TERRAFORM_ROLE }}
+          aws-region: us-east-1
+      - run: terraform init -upgrade
+      - run: terraform plan -out=tfplan
+        if: inputs.action == 'plan'
+      - run: terraform apply -auto-approve
+        if: inputs.action == 'apply'
+

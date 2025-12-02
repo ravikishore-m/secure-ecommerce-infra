@@ -1,0 +1,46 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: cart-redis
+  namespace: ecommerce
+spec:
+  ports:
+    - port: 6379
+      targetPort: 6379
+  clusterIP: None
+  selector:
+    app: cart-redis
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: cart-redis
+  namespace: ecommerce
+spec:
+  selector:
+    matchLabels:
+      app: cart-redis
+  serviceName: cart-redis
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: cart-redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7.4-alpine
+          ports:
+            - containerPort: 6379
+          volumeMounts:
+            - name: data
+              mountPath: /data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi
+
