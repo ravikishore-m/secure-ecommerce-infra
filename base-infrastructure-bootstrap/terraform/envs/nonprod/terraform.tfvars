@@ -1,4 +1,4 @@
-owner                       = "platform-team"
+owner                       = "Machiraju Ravikishore"
 region                      = "us-east-1"
 assume_role_arn             = "arn:aws:iam::111111111111:role/SharedServicesTerraform"
 alert_emails                = ["nonprod-alerts@ecommerce.internal"]

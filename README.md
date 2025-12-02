@@ -1,5 +1,7 @@
 ## AWS Secure Ecommerce Platform
 
+**Owner:** Machiraju Ravikishore
+
 **Repository Description**  
 The Secure Ecommerce Platform repository is a turnkey, security-first reference implementation for running an AWS-native ecommerce business. It bundles Terraform  automation, reusable infrastructure modules, GitHub Actions pipelines with supply-chain gates, and Kubernetes manifests for every customer-facing microservice so platform teams can bootstrap a compliant environment quickly.
 
