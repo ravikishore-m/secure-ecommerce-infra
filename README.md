@@ -3,6 +3,18 @@
 **Repository Description**  
 The Secure Ecommerce Platform repository is a turnkey, security-first reference implementation for running an AWS-native ecommerce business. It bundles Terraform  automation, reusable infrastructure modules, GitHub Actions pipelines with supply-chain gates, and Kubernetes manifests for every customer-facing microservice so platform teams can bootstrap a compliant environment quickly.
 
+### About & Tech Stack
+This project packages everything a platform team needs to stand up a secure ecommerce shop on AWS—landing zone, infrastructure code, CI/CD, and the storefront plus API services. It favors boring, proven services so day-2 ops stay simple.
+
+**Tech stack (plain English):**
+- AWS (VPC, EKS Kubernetes, RDS PostgreSQL, ALB + WAF, Cognito, Route53, Secrets Manager, KMS)
+- Terraform modules for every account + AWS resource, stored alongside GitHub Actions pipelines
+- Kubernetes/Helm for app deployment, Calico for network policies, AWS Load Balancer Controller for ingress
+- Docker images, SBOM + security scans via Syft/Grype/Trivy, Cosign for image signing
+- React + Vite frontend, Node.js/Express microservices (login, orders, payments, inventory, catalog), shared DB helpers
+- Prometheus/Grafana (AMP) + CloudWatch + ADOT for metrics, logs, and traces
+- OPA/Conftest and Checkov policies keeping IaC compliant and production ready
+
 This repository delivers a production-ready reference implementation for deploying a security-first ecommerce stack on AWS. It codifies multi-account landing-zone practices, Terraform modules for reusable infrastructure, GitHub Actions CI/CD, and EKS-ready application manifests for the following microservices:
 
 - `frontend` (React storefront served via Nginx)
