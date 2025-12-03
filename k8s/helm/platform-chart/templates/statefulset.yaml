@@ -1,5 +1,6 @@
 {{- range $name, $svc := .Values.services }}
 {{- if eq (default "deployment" $svc.workload) "statefulset" }}
+{{- $persistence := $svc.persistence | default dict }}
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -14,13 +15,31 @@ spec:
     matchLabels:
       app.kubernetes.io/name: {{ $name }}
       app.kubernetes.io/instance: {{ $.Release.Name }}
+  podManagementPolicy: {{ $svc.podManagementPolicy | default $.Values.statefulset.podManagementPolicy | default "OrderedReady" }}
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      partition: {{ $svc.rollingUpdate.partition | default $.Values.statefulset.rollingUpdate.partition | default 0 }}
   template:
     metadata:
       labels:
         app.kubernetes.io/name: {{ $name }}
         app.kubernetes.io/instance: {{ $.Release.Name }}
+        {{- with $.Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with $.Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
     spec:
       serviceAccountName: {{ include "ecommerce-platform.serviceAccountName" $ }}
+      {{- if $.Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range $.Values.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
       securityContext:
         {{- toYaml $.Values.podSecurityContext | nindent 8 }}
       containers:
@@ -73,10 +92,29 @@ spec:
             {{- toYaml $.Values.securityContext | nindent 12 }}
           volumeMounts:
             - mountPath: /var/lib/ecommerce/cache
-              name: cache
+              name: {{ default "cache" $persistence.volumeName }}
+      {{- if not (default false $persistence.enabled) }}
       volumes:
-        - name: cache
+        - name: {{ default "cache" $persistence.volumeName }}
           emptyDir: {}
+      {{- end }}
+  {{- if default false $persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: {{ default "cache" $persistence.volumeName }}
+      spec:
+        accessModes:
+{{ toYaml ($persistence.accessModes | default $.Values.statefulset.persistence.accessModes) | nindent 8 }}
+        resources:
+          requests:
+            storage: {{ $persistence.size | default $.Values.statefulset.persistence.size }}
+        {{- if or $persistence.storageClass $.Values.statefulset.persistence.storageClass }}
+        storageClassName: {{ default $.Values.statefulset.persistence.storageClass $persistence.storageClass }}
+        {{- end }}
+        {{- if or $persistence.volumeMode $.Values.statefulset.persistence.volumeMode }}
+        volumeMode: {{ default $.Values.statefulset.persistence.volumeMode $persistence.volumeMode }}
+        {{- end }}
+  {{- end }}
 ---
 {{- end }}
 {{- end }}

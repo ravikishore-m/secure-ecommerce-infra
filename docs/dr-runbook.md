@@ -14,12 +14,12 @@
 1. **Declare Incident**: Engage incident commander, infra, app, DB, and security on-call.
 2. **Assess Scope**: Review CloudWatch dashboards, Grafana, GuardDuty, and Incident Manager timeline.
 3. **Failover Routing**:
-   - If region impaired, switch Route53 to secondary region (pre-provisioned infrastructure).
-   - Trigger AWS Global Accelerator listener weight shift if partial degradation.
+   - If region impaired, flip Route53 failover records to the standby environment (pre-provisioned via Terraform).
+   - If only the ALB is impacted, re-point the record to the healthy cluster’s ALB DNS name.
 4. **EKS Cluster Recovery**:
-   - Re-run Terraform in target region if cluster unavailable.
-   - Restore etcd backups if control plane issue (handled by AWS EKS support).
-   - Deploy Argo CD bootstrap manifests (`k8s/helm/platform-chart`).
+   - Re-run Terraform in the target region/account (`base-infrastructure-bootstrap/terraform/envs/<env>` followed by `terraform/envs/<env>`).
+   - AWS operates the EKS control plane—open a support case if the API endpoint is unavailable.
+   - Reinstall Calico + namespaces (`k8s/namespaces/bootstrap.yaml`, `k8s/addons/calico`) and redeploy workloads via Helm (`k8s/helm/platform-chart` with the environment values file).
 5. **Data Layer**:
    - Promote cross-region read replica to primary.
    - Update Secrets Manager rotation config with new writer endpoint.

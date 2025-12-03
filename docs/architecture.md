@@ -10,40 +10,39 @@
 Service Control Policies enforce: mandatory tagging, KMS encryption, blocked regions, and approved instance families.
 
 ### Networking
-- `/16` VPC per account (e.g., `10.20.0.0/16`) with the following subnets per AZ:  
-  - Public `/20` (ingress, ALB, NAT)  
-  - Private-App `/19` (EKS nodes)  
+- `/16` VPC per account (e.g., `10.20.0.0/16`) carved into:  
+  - Public `/20` (ALB, NAT gateways)  
+  - Private-App `/19` (EKS nodes/add-ons)  
   - Private-Data `/22` (RDS, Redis)  
-- AWS Transit Gateway for future hub-and-spoke connectivity.  
-- AWS Network Firewall + Traffic Mirroring for east/west inspection.  
-- Route53 Resolver endpoints for hybrid DNS.  
-- VPC Flow Logs to centralized S3 + OpenSearch.
+- AWS Transit Gateway resources provisioned for future hub-and-spoke connectivity (no attachments by default).  
+- Interface VPC endpoints for Secrets Manager, ECR API/DKR, CloudWatch Logs, and SSM.  
+- VPC Flow Logs stream into CloudWatch log groups (encrypted via KMS) for detection tooling.
 
 ### Edge & Security
-- AWS CloudFront (WAF + Shield Advanced) → AWS Global Accelerator → ALB (HTTP/2 + gRPC).  
-- AWS WAF managed rules + custom bot/threat signatures.  
-- SSL termination at CloudFront with ACM-managed certs.  
-- AWS Firewall Manager enforces consistent SG & WAF policies.  
-- GuardDuty, Macie, Detective, and Security Hub enabled org-wide.
+- AWS Application Load Balancer (ALB) fronting the storefront + APIs with TLS certs from ACM.  
+- AWS WAF (managed rule groups + custom geo filters) associated to the ALB via the ingress module.  
+- Shield Standard + Security Hub + GuardDuty + Config delivered by the `modules/security` stack.  
+- Calico network policies + AWS security groups enforce east/west segmentation.  
+- GitHub OIDC-backed IAM roles issue short-lived creds to CI/CD and GitOps deployers.
 
 ### Compute & Orchestration
-- Amazon EKS (control plane private) with managed node groups:
-  - `general`: `m6a.large` spot/od mix for stateless services.
-  - `system`: `t3.medium` on-demand for ingress, observability, Argo CD.
-  - Optional Fargate profile for jobs.
-- Add-ons: CoreDNS, VPC CNI, KubeProxy, EBS CSI via Terraform.  
-- Policy-as-code: Kyverno/OPA Gatekeeper baseline, Pod Security Standards restricted.  
-- AWS IAM Roles for Service Accounts for fine-grained AWS access (S3, SQS, Secrets Manager).  
-- Cluster Autoscaler + Karpenter ready.
+- Amazon EKS (private API) with two managed node groups:
+  - `general`: on-demand `t3.large` nodes for baseline traffic.
+  - `spot`: burstable spot capacity for cost-optimized stateless services.
+- Pod Security Standards labels applied via `k8s/namespaces/bootstrap.yaml`; Helm chart enforces non-root, seccomp, dropped capabilities.  
+- Calico (installed through `k8s/addons/calico`) supplies network policy + service graph enforcement.  
+- AWS IAM Roles for Service Accounts (IRSA) created per environment so workloads can reach Secrets Manager / SSM without node creds.  
+- AWS Load Balancer Controller + standard addons (CoreDNS/VPC CNI/EBSCsi) provisioned after cluster creation.
+- Namespace-level `ResourceQuota` + `LimitRange` manifests (per env) keep runaway requests under control, while PodDisruptionBudgets are emitted for every service to guarantee availability during voluntary disruptions.
+- Deployments/StatefulSets leverage RollingUpdate strategies with configurable surge/unavailable, stateful services (orders, Redis) mount PVCs for durable cache/journal storage, and HPAs consume both CPU *and* throttled-request metrics for proactive scaling.
 
 ### Data Layer
-- Amazon RDS PostgreSQL 15:  
-  - Multi-AZ (prod), Single-AZ (np).  
-  - Storage autoscaling, performance insights, TLS-only connections, IAM auth.  
-  - Parameter groups enforce SSL + logging.  
-- AWS Secrets Manager rotates DB creds every 30 days.  
-- Amazon S3 for object data (encrypted, access logs, lifecycle tiers).  
-- Amazon ElastiCache (optional) for session caching.
+- Amazon RDS for PostgreSQL 15 managed via Terraform modules:  
+  - Multi-AZ enabled in prod, single-AZ in nonprod.  
+  - KMS-encrypted storage, enforced TLS (`rds.force_ssl`), enhanced/CloudWatch monitoring.  
+  - Credentials stored in AWS Secrets Manager and mounted into Kubernetes via secrets.  
+- Amazon S3 buckets for remote state, Config logs, and artifacts (encryption + versioning).  
+- Cart cache backed by Redis (statefulset) inside the cluster; swap to ElastiCache if managed caching is required.
 
 ### Observability
 - AWS Distro for OpenTelemetry (ADOT) DaemonSet exporting:
@@ -57,10 +56,11 @@ Service Control Policies enforce: mandatory tagging, KMS encryption, blocked reg
 
 ### CI/CD & Supply Chain
 - GitHub Actions workflows:
-  - `terraform.yml`: fmt, validate, tfsec/checkov, OPA policy checks, plan/apply with manual approval for prod.
-  - `app-delivery.yml`: Node/React tests, SAST (ESLint, npm audit), Docker build, Syft SBOM, Trivy scan, Cosign sign, push to ECR, deploy via Argo CD CLI.
-- Environments require approval + deploy keys.  
-- Artifact retention enforced, provenance metadata stored with images.
+  - **Landing Zone Bootstrap & Guardrails** (`bootstrap.yml`): runs fmt/tfsec/Checkov, then Terraform plan/apply for shared-services + env scaffolding.
+  - **Environment Infrastructure (Terraform)** (`terraform.yml`): fmt/tfsec/Checkov/OPA, multi-account plans, manual `workflow_dispatch` applies.
+  - **Application Delivery & Promotion** (`app-delivery.yml`): mirrors Docker Hub base images into ECR, runs unit tests, builds images, generates SBOMs (Syft), scans with Trivy, signs via Cosign, deploys nonprod, promotes digests to the prod registry (`scripts/promote-image.sh`), then deploys prod.
+- Short-lived GitHub OIDC sessions assume the Terraform/app deployer roles emitted by the bootstrap stack.  
+- Immutable ECR repos (`mutable_tags=false`) and image mirroring remove internet pulls during deployments.
 
 ### HA & DR Strategy
 - Multi-AZ EKS, ALB, RDS.  

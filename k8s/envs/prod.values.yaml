@@ -1,0 +1,25 @@
+global:
+  environment: prod
+  imageRegistry: "<prod-account-id>.dkr.ecr.us-east-1.amazonaws.com"
+  domain: "app.prod.demo.ecommerce-example.com"
+
+database:
+  host: "ecommerce-prod.cluster-mnopqrstuvwx.us-east-1.rds.amazonaws.com"
+  port: "5432"
+  name: "ecommerce"
+  user: "appadmin"
+  secretName: ecommerce-db
+  createSecret: false
+
+cognito:
+  region: us-east-1
+  userPoolId: "us-east-1_yyyyyy"
+  clientId: "yyyyyyyyyyyyyyyyyyyyyyyyyy"
+
+serviceAccount:
+  annotations:
+    eks.amazonaws.com/role-arn: "arn:aws:iam::<prod-account-id>:role/ecommerce-platform-prod-app-irsa"
+
+imagePullSecrets:
+  - name: ecr-registry
+

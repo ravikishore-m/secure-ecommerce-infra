@@ -1,0 +1,103 @@
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: ecommerce-compute
+  namespace: ecommerce
+spec:
+  hard:
+    requests.cpu: "20"
+    requests.memory: 48Gi
+    limits.cpu: "40"
+    limits.memory: 96Gi
+    pods: "120"
+    persistentvolumeclaims: "30"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: ecommerce-defaults
+  namespace: ecommerce
+spec:
+  limits:
+    - type: Container
+      defaultRequest:
+        cpu: 300m
+        memory: 448Mi
+      default:
+        cpu: "1"
+        memory: 2Gi
+      max:
+        cpu: "3"
+        memory: 4Gi
+      min:
+        cpu: 100m
+        memory: 256Mi
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: observability-compute
+  namespace: observability
+spec:
+  hard:
+    requests.cpu: "10"
+    requests.memory: 24Gi
+    limits.cpu: "20"
+    limits.memory: 40Gi
+    pods: "60"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: observability-defaults
+  namespace: observability
+spec:
+  limits:
+    - type: Container
+      defaultRequest:
+        cpu: 300m
+        memory: 512Mi
+      default:
+        cpu: 900m
+        memory: 1Gi
+      max:
+        cpu: "2"
+        memory: 3Gi
+      min:
+        cpu: 100m
+        memory: 256Mi
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: networking-compute
+  namespace: networking
+spec:
+  hard:
+    requests.cpu: "4"
+    requests.memory: 8Gi
+    limits.cpu: "8"
+    limits.memory: 16Gi
+    pods: "30"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: networking-defaults
+  namespace: networking
+spec:
+  limits:
+    - type: Container
+      defaultRequest:
+        cpu: 150m
+        memory: 256Mi
+      default:
+        cpu: 500m
+        memory: 768Mi
+      max:
+        cpu: 1
+        memory: 1Gi
+      min:
+        cpu: 50m
+        memory: 128Mi
+

@@ -1,4 +1,4 @@
-name: app-delivery
+name: Application Delivery & Promotion
 
 on:
   push:
@@ -22,20 +22,38 @@ permissions:
 
 env:
   AWS_REGION: us-east-1
-  ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com
+  NODE_BASE_TAG: 20-alpine
+  NGINX_BASE_TAG: 1.27-alpine
+  COMPONENTS: "frontend login orders payments inventory catalog"
 
 jobs:
-  build-and-scan:
+  mirror-base-images:
     runs-on: ubuntu-22.04
     strategy:
       matrix:
-        component:
-          - frontend
-          - login
-          - orders
-          - payments
-          - inventory
-          - catalog
+        environment: [nonprod, prod]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ matrix.environment == 'prod' && secrets.AWS_PROD_APP_DEPLOY_ROLE || secrets.AWS_NONPROD_APP_DEPLOY_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+      - uses: aws-actions/amazon-ecr-login@v2
+      - name: Mirror base images
+        env:
+          ACCOUNT_ID: ${{ matrix.environment == 'prod' && secrets.AWS_PROD_ACCOUNT_ID || secrets.AWS_NONPROD_ACCOUNT_ID }}
+        run: |
+          export ECR_REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          echo "ECR_REGISTRY=${ECR_REGISTRY}" >> $GITHUB_ENV
+          chmod +x scripts/mirror-images.sh
+          ./scripts/mirror-images.sh
+
+  build-and-scan:
+    needs: mirror-base-images
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        component: [frontend, login, orders, payments, inventory, catalog]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -59,10 +77,17 @@ jobs:
         working-directory: ${{ env.COMPONENT_PATH }}
       - uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_APP_DEPLOY_ROLE }}
+          role-to-assume: ${{ secrets.AWS_NONPROD_APP_DEPLOY_ROLE }}
           aws-region: ${{ env.AWS_REGION }}
       - uses: aws-actions/amazon-ecr-login@v2
         id: ecr
+      - name: Set registry context
+        env:
+          ACCOUNT_ID: ${{ secrets.AWS_NONPROD_ACCOUNT_ID }}
+        run: |
+          echo "ECR_REGISTRY=${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com" >> $GITHUB_ENV
+          echo "NODE_MIRROR=${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/mirrors/node:${{ env.NODE_BASE_TAG }}" >> $GITHUB_ENV
+          echo "NGINX_MIRROR=${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/mirrors/nginx:${{ env.NGINX_BASE_TAG }}" >> $GITHUB_ENV
       - uses: docker/setup-buildx-action@v3
       - name: Build and push image
         uses: docker/build-push-action@v5
@@ -72,7 +97,11 @@ jobs:
           provenance: true
           tags: |
             ${{ env.ECR_REGISTRY }}/ecom-${{ matrix.component }}:${{ github.sha }}
-            ${{ env.ECR_REGISTRY }}/ecom-${{ matrix.component }}:latest
+            ${{ env.ECR_REGISTRY }}/ecom-${{ matrix.component }}:nonprod-latest
+          build-args: |
+            BASE_IMAGE=${{ env.NODE_MIRROR }}
+            NODE_BASE_IMAGE=${{ env.NODE_MIRROR }}
+            NGINX_BASE_IMAGE=${{ env.NGINX_MIRROR }}
       - name: Trivy Scan
         uses: aquasecurity/trivy-action@0.24.0
         with:
@@ -91,23 +120,90 @@ jobs:
         env:
           COSIGN_EXPERIMENTAL: "true"
 
-  deploy:
+  deploy-nonprod:
     needs: build-and-scan
+    runs-on: ubuntu-22.04
+    environment: nonprod
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_NONPROD_APP_DEPLOY_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Configure registry context
+        env:
+          ACCOUNT_ID: ${{ secrets.AWS_NONPROD_ACCOUNT_ID }}
+        run: |
+          echo "ECR_REGISTRY=${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com" >> $GITHUB_ENV
+          echo "CLUSTER_NAME=ecommerce-platform-nonprod-eks" >> $GITHUB_ENV
+      - name: Update kubeconfig
+        run: aws eks update-kubeconfig --name "${CLUSTER_NAME}" --region $AWS_REGION
+      - name: Helm upgrade (nonprod)
+        run: |
+          helm upgrade --install ecommerce k8s/helm/platform-chart \
+            --namespace ecommerce --create-namespace \
+            --values k8s/envs/nonprod.values.yaml \
+            --set global.imageRegistry=${ECR_REGISTRY} \
+            --set global.environment=nonprod \
+            --atomic --wait
+
+  promote-images:
+    needs: deploy-nonprod
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_NONPROD_APP_DEPLOY_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Login to nonprod registry
+        env:
+          ACCOUNT_ID: ${{ secrets.AWS_NONPROD_ACCOUNT_ID }}
+        run: aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin ${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_PROD_APP_DEPLOY_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Login to prod registry
+        env:
+          ACCOUNT_ID: ${{ secrets.AWS_PROD_ACCOUNT_ID }}
+        run: aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin ${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
+      - name: Promote images to prod registry
+        env:
+          NONPROD_REGISTRY: ${{ secrets.AWS_NONPROD_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com
+          PROD_REGISTRY: ${{ secrets.AWS_PROD_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com
+          COMPONENTS: ${{ env.COMPONENTS }}
+        run: |
+          chmod +x scripts/promote-image.sh
+          for svc in $COMPONENTS; do
+            ./scripts/promote-image.sh "${NONPROD_REGISTRY}" "${PROD_REGISTRY}" "ecom-${svc}" "${GITHUB_SHA}"
+            ./scripts/promote-image.sh "${NONPROD_REGISTRY}" "${PROD_REGISTRY}" "ecom-${svc}" "nonprod-latest" "prod-latest"
+          done
+
+  deploy-prod:
+    needs: promote-images
     runs-on: ubuntu-22.04
     environment: prod
     steps:
       - uses: actions/checkout@v4
       - uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_APP_DEPLOY_ROLE }}
+          role-to-assume: ${{ secrets.AWS_PROD_APP_DEPLOY_ROLE }}
           aws-region: ${{ env.AWS_REGION }}
+      - name: Configure registry context
+        env:
+          ACCOUNT_ID: ${{ secrets.AWS_PROD_ACCOUNT_ID }}
+        run: |
+          echo "ECR_REGISTRY=${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com" >> $GITHUB_ENV
+          echo "CLUSTER_NAME=ecommerce-platform-prod-eks" >> $GITHUB_ENV
       - name: Update kubeconfig
-        run: aws eks update-kubeconfig --name prod-eks --region $AWS_REGION
-      - name: Helm upgrade
+        run: aws eks update-kubeconfig --name "${CLUSTER_NAME}" --region $AWS_REGION
+      - name: Helm upgrade (prod)
         run: |
           helm upgrade --install ecommerce k8s/helm/platform-chart \
             --namespace ecommerce --create-namespace \
-            --set global.imageRegistry=${{ env.ECR_REGISTRY }} \
-            --set-string ingress.annotations.\"alb\\.ingress\\.kubernetes\\.io/wafv2-acl-arn\"=${{ secrets.WAF_ARN }} \
-            --set-string ingress.annotations.\"alb\\.ingress\\.kubernetes\\.io/security-groups\"=${{ secrets.INGRESS_SG }}
+            --values k8s/envs/prod.values.yaml \
+            --set global.imageRegistry=${ECR_REGISTRY} \
+            --set global.environment=prod \
+            --atomic --wait
 

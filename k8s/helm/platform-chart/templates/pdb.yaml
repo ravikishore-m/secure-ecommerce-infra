@@ -1,0 +1,32 @@
+{{- if .Values.pdb.enabled }}
+{{- range $name, $svc := .Values.services }}
+{{- $workload := default "deployment" $svc.workload }}
+{{- $svcPdb := $svc.pdb | default dict }}
+{{- $replicas := $svc.replicaCount | default 1 }}
+{{- $enabled := default $.Values.pdb.enabled ($svcPdb.enabled | default nil) }}
+{{- if and $enabled (gt $replicas 1) }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "ecommerce-platform.fullname" $ }}-{{ $name }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $name }}
+      app.kubernetes.io/instance: {{ $.Release.Name }}
+  {{- if hasKey $svcPdb "minAvailable" }}
+  minAvailable: {{ $svcPdb.minAvailable }}
+  {{- else if hasKey $svcPdb "maxUnavailable" }}
+  maxUnavailable: {{ $svcPdb.maxUnavailable }}
+  {{- else if $.Values.pdb.defaultMinAvailable }}
+  minAvailable: {{ $.Values.pdb.defaultMinAvailable }}
+  {{- else if $.Values.pdb.defaultMaxUnavailable }}
+  maxUnavailable: {{ $.Values.pdb.defaultMaxUnavailable }}
+  {{- else }}
+  minAvailable: 1
+  {{- end }}
+---
+{{- end }}
+{{- end }}
+{{- end }}
+

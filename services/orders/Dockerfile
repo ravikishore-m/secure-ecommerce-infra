@@ -1,4 +1,5 @@
-FROM node:20-alpine AS base
+ARG BASE_IMAGE="public.ecr.aws/docker/library/node:20-alpine"
+FROM ${BASE_IMAGE} AS base
 WORKDIR /app
 
 COPY package.json package-lock.json* ./

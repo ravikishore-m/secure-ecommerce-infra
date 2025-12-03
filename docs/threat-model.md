@@ -15,17 +15,17 @@
 
 | Surface | Threats | Mitigations |
 | --- | --- | --- |
-| Edge (CloudFront/ALB) | DDoS, OWASP Top 10, bot abuse | Shield Advanced, AWS WAF managed + custom rules, rate limiting, Global Accelerator health checks, TLS 1.2 enforced |
-| API/Auth | Credential stuffing, session hijack | Amazon Cognito with adaptive MFA, reCAPTCHA, short-lived tokens, mTLS between services |
-| Network | Lateral movement, subnet sprawl | Dedicated private subnets, SG least privilege, Network Firewall, VPC Flow Logs + GuardDuty findings |
-| Data | RDS snapshot theft, unencrypted S3 | KMS CMKs, IAM condition keys (`kms:ViaService`), snapshot sharing blocked via SCP, S3 Block Public Access |
-| Supply Chain | Dependency trojan, image tampering | Dependabot + npm audit, Sigstore/Cosign signing, OPA policies verifying signatures, immutable ECR tags |
-| CI/CD | Token theft, privilege escalation | GitHub OIDC short-lived creds, environments with required reviewers, Gitleaks secret scanning |
-| Kubernetes | Privilege escalation, drift | Pod Security Standards restricted, Kyverno policies, IRSA, NS/NetworkPolicies, read-only rootfs, image scanning |
+| Edge (ALB + WAF) | DDoS, OWASP Top 10, bot abuse | Shield Standard, AWS WAF managed rule groups, geo filters, TLS 1.2+, health checks via Route53 |
+| API/Auth | Credential stuffing, session hijack | Amazon Cognito hosted UI, adaptive MFA, short-lived tokens, secure session cookies |
+| Network | Lateral movement, subnet sprawl | Dedicated private subnets, Calico network policies, SG least privilege, VPC Flow Logs + GuardDuty detections |
+| Data | RDS snapshot theft, unencrypted S3 | KMS CMKs, Secrets Manager, snapshot sharing disabled via IAM, S3 Block Public Access |
+| Supply Chain | Dependency trojan, image tampering | Dependabot + npm audit, Syft SBOM + Trivy scan, Cosign signing, immutable ECR repos, mirrored base images |
+| CI/CD | Token theft, privilege escalation | GitHub OIDC short-lived creds scoped to repo/environment, required reviews, artifact retention in S3, terraform/app roles limited via STS |
+| Kubernetes | Privilege escalation, drift | Pod Security Standards (`restricted`), read-only rootfs, seccomp defaults, IRSA, Calico network policies, namespace ResourceQuotas/LimitRanges, imagePullSecrets bound to ECR, service-level PDBs |
 
 ### Detection & Response
-- GuardDuty + Security Hub aggregated to shared account with auto-ticketing.
-- CloudTrail Lake queries for anomaly detection; Detective for lateral movement analysis.
-- Fluent Bit exports Kubernetes audit logs to OpenSearch for correlation.
-- PagerDuty runbooks for P1 incidents referencing `docs/dr-runbook.md`.
+- GuardDuty + Security Hub (enabled via Terraform) publish findings to the shared-services account and alert lists defined in `var.alert_emails`.
+- CloudTrail + Config logs live in encrypted S3 buckets; query via Athena/CloudWatch Lake for investigations.
+- Fluent Bit ships container + audit logs to CloudWatch Logs where metric filters back PagerDuty/Slack alerts.
+- PagerDuty / SNS notifications link to `docs/dr-runbook.md` so on-call responders follow the tested recovery steps.
 

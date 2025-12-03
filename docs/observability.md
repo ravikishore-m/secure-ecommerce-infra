@@ -8,12 +8,13 @@
   - Capacity (node/pod utilization, HPA signals)
   - Business KPIs (orders/min, payment success, inventory latency)
 - **Alerting**: AMP alert rules forward to SNS → PagerDuty & Slack via AWS Chatbot. Include runbook links.
+- **Custom metrics**: Expose throttled request counters (e.g., `http_requests_throttled_per_second`) via Prometheus Adapter so HorizontalPodAutoscalers can scale when 4xx/5xx spikes appear, not just on CPU.
 
 ### Logs
-- **Ingestion**: Fluent Bit DaemonSet with IAM role shipping to CloudWatch Logs, Kinesis Firehose → OpenSearch, and S3 (long-term).
-- **Retention**: 30 days in CloudWatch, 365 days in S3 Glacier Deep Archive.
-- **Correlation**: Trace/span IDs injected into logs (structured JSON).
-- **Security**: CloudTrail org trail, VPC Flow Logs, WAF logs stored centrally.
+- **Ingestion**: Fluent Bit (IRSA-enabled) ships Kubernetes logs + audit events to CloudWatch Logs; CloudWatch subscriptions or exporters can forward to OpenSearch/S3 if needed.
+- **Retention**: 30 days (workload logs) / 365 days (audit logs) configurable via Terraform.
+- **Correlation**: Structured JSON with request IDs, span IDs, and customer/session metadata.
+- **Security**: CloudTrail org trail, VPC Flow Logs, WAF logs stored in the shared-services account.
 
 ### Traces
 - **Collector**: ADOT (OTLP) exporting to AWS X-Ray + AMP.
@@ -21,8 +22,8 @@
 - **Visualization**: X-Ray Service Map + Grafana Tempo data source (optional).
 
 ### Synthetic Monitoring
-- CloudWatch Synthetics canaries hitting `/healthz`, `/orders`, `/payments`.
-- Lambda-backed custom checks for third-party integrations (payment gateways).
+- (Optional) CloudWatch Synthetics canaries hitting `/healthz`, `/orders`, `/payments`. Store scripts alongside this repo and deploy via SAM/Serverless.
+- Lightweight curl-based smoke tests run in GitHub Actions after successful Helm deploys (add as needed).
 
 ### Incident Management
 - Alert routing via AWS Incident Manager → PagerDuty.

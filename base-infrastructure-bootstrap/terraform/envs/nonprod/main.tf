@@ -41,6 +41,10 @@ locals {
   name_prefix  = "${local.project_name}-${var.environment}"
   fqdn_prefix  = "${var.environment}.${var.root_domain}"
   azs          = slice(data.aws_availability_zones.available.names, 0, 3)
+  github_subjects = [
+    for repo in var.github_repositories :
+    "repo:${repo}:environment:${var.environment}"
+  ]
 
   cidr_block                = "10.20.0.0/16"
   public_subnet_cidrs       = ["10.20.0.0/20", "10.20.16.0/20", "10.20.32.0/20"]
@@ -235,6 +239,10 @@ module "eks" {
   }
 }
 
+locals {
+  cluster_oidc_provider_url = replace(module.eks.cluster_oidc_provider_arn, "arn:aws:iam::${data.aws_caller_identity.current.account_id}:oidc-provider/", "")
+}
+
 module "security" {
   source = "../../../../terraform/modules/security"
 
@@ -289,5 +297,160 @@ module "iam" {
   create_github_oidc_provider = var.create_github_oidc_provider
   github_oidc_provider_arn    = var.github_oidc_provider_arn
   tags                        = { Environment = var.environment, Project = local.project_name }
+}
+
+data "aws_iam_policy_document" "app_deployer_assume" {
+  statement {
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+
+    principals {
+      type        = "Federated"
+      identifiers = [module.iam.github_oidc_provider_arn]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:aud"
+      values   = ["sts.amazonaws.com"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:sub"
+      values   = local.github_subjects
+    }
+  }
+}
+
+data "aws_iam_policy_document" "app_deployer" {
+  statement {
+    sid    = "EcrPushPull"
+    effect = "Allow"
+    actions = [
+      "ecr:BatchCheckLayerAvailability",
+      "ecr:BatchGetImage",
+      "ecr:CompleteLayerUpload",
+      "ecr:CreateRepository",
+      "ecr:DescribeRepositories",
+      "ecr:GetAuthorizationToken",
+      "ecr:GetDownloadUrlForLayer",
+      "ecr:InitiateLayerUpload",
+      "ecr:ListImages",
+      "ecr:PutImage",
+      "ecr:SetRepositoryPolicy",
+      "ecr:UploadLayerPart"
+    ]
+    resources = ["*"]
+  }
+
+  statement {
+    sid     = "EksDescribe"
+    effect  = "Allow"
+    actions = ["eks:DescribeCluster"]
+    resources = [
+      "arn:${data.aws_partition.current.partition}:eks:${var.region}:${data.aws_caller_identity.current.account_id}:cluster/${module.eks.cluster_name}"
+    ]
+  }
+
+  statement {
+    sid    = "SecretsRead"
+    effect = "Allow"
+    actions = [
+      "secretsmanager:GetSecretValue",
+      "ssm:GetParameter",
+      "ssm:GetParameters",
+      "ssm:GetParametersByPath"
+    ]
+    resources = [
+      "arn:${data.aws_partition.current.partition}:secretsmanager:${var.region}:${data.aws_caller_identity.current.account_id}:secret:${local.project_name}-${var.environment}*",
+      "arn:${data.aws_partition.current.partition}:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:parameter/${local.project_name}/${var.environment}*"
+    ]
+  }
+
+  statement {
+    sid       = "KmsDecrypt"
+    effect    = "Allow"
+    actions   = ["kms:Decrypt"]
+    resources = [aws_kms_key.general.arn]
+  }
+}
+
+resource "aws_iam_role" "app_deployer" {
+  name               = "${local.name_prefix}-app-deployer"
+  assume_role_policy = data.aws_iam_policy_document.app_deployer_assume.json
+
+  tags = {
+    Environment = var.environment
+    Project     = local.project_name
+  }
+}
+
+resource "aws_iam_role_policy" "app_deployer" {
+  name   = "${aws_iam_role.app_deployer.name}-inline"
+  role   = aws_iam_role.app_deployer.id
+  policy = data.aws_iam_policy_document.app_deployer.json
+}
+
+data "aws_iam_policy_document" "app_irsa_assume" {
+  statement {
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+
+    principals {
+      type        = "Federated"
+      identifiers = [module.eks.cluster_oidc_provider_arn]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "${local.cluster_oidc_provider_url}:aud"
+      values   = ["sts.amazonaws.com"]
+    }
+
+    condition {
+      test     = "StringLike"
+      variable = "${local.cluster_oidc_provider_url}:sub"
+      values   = ["system:serviceaccount:ecommerce:*"]
+    }
+  }
+}
+
+data "aws_iam_policy_document" "app_irsa" {
+  statement {
+    sid    = "SecretsRead"
+    effect = "Allow"
+    actions = [
+      "secretsmanager:GetSecretValue",
+      "ssm:GetParameter",
+      "ssm:GetParameters",
+      "ssm:GetParametersByPath"
+    ]
+    resources = [
+      "arn:${data.aws_partition.current.partition}:secretsmanager:${var.region}:${data.aws_caller_identity.current.account_id}:secret:${local.project_name}-${var.environment}*",
+      "arn:${data.aws_partition.current.partition}:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:parameter/${local.project_name}/${var.environment}*"
+    ]
+  }
+
+  statement {
+    sid       = "KmsDecrypt"
+    effect    = "Allow"
+    actions   = ["kms:Decrypt"]
+    resources = [aws_kms_key.general.arn]
+  }
+}
+
+resource "aws_iam_role" "app_irsa" {
+  name               = "${local.name_prefix}-app-irsa"
+  assume_role_policy = data.aws_iam_policy_document.app_irsa_assume.json
+
+  tags = {
+    Environment = var.environment
+    Project     = local.project_name
+  }
+}
+
+resource "aws_iam_role_policy" "app_irsa" {
+  name   = "${aws_iam_role.app_irsa.name}-inline"
+  role   = aws_iam_role.app_irsa.id
+  policy = data.aws_iam_policy_document.app_irsa.json
 }
 

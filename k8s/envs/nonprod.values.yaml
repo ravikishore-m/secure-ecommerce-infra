@@ -1,0 +1,25 @@
+global:
+  environment: nonprod
+  imageRegistry: "<nonprod-account-id>.dkr.ecr.us-east-1.amazonaws.com"
+  domain: "app.nonprod.demo.ecommerce-example.com"
+
+database:
+  host: "ecommerce-nonprod.cluster-abcdefghijkl.us-east-1.rds.amazonaws.com"
+  port: "5432"
+  name: "ecommerce"
+  user: "appadmin"
+  secretName: ecommerce-db
+  createSecret: false
+
+cognito:
+  region: us-east-1
+  userPoolId: "us-east-1_xxxxxx"
+  clientId: "xxxxxxxxxxxxxxxxxxxxxxxxxx"
+
+serviceAccount:
+  annotations:
+    eks.amazonaws.com/role-arn: "arn:aws:iam::<nonprod-account-id>:role/ecommerce-platform-nonprod-app-irsa"
+
+imagePullSecrets:
+  - name: ecr-registry
+

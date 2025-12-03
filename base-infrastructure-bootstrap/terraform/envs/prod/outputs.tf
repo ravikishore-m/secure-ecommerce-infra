@@ -62,3 +62,15 @@ output "cognito_domain" {
   value = module.cognito.user_pool_domain
 }
 
+output "github_actions_role_arn" {
+  value = module.iam.github_actions_role_arn
+}
+
+output "app_deployer_role_arn" {
+  value = aws_iam_role.app_deployer.arn
+}
+
+output "app_irsa_role_arn" {
+  value = aws_iam_role.app_irsa.arn
+}
+

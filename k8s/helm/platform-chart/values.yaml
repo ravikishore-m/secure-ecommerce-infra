@@ -12,6 +12,21 @@ defaultResources:
     cpu: 500m
     memory: 512Mi
 
+rollingUpdate:
+  maxUnavailable: 1
+  maxSurge: 1
+
+statefulset:
+  podManagementPolicy: OrderedReady
+  rollingUpdate:
+    partition: 0
+  persistence:
+    accessModes:
+      - ReadWriteOnce
+    size: 10Gi
+    storageClass: ""
+    volumeMode: Filesystem
+
 database:
   host: "ecommerce-db.nonprod.example"
   port: "5432"
@@ -34,6 +49,15 @@ services:
       repository: frontend
       tag: v1.0.0
     containerPort: 80
+    resources:
+      requests:
+        cpu: 150m
+        memory: 256Mi
+      limits:
+        cpu: 400m
+        memory: 512Mi
+    pdb:
+      minAvailable: 1
   login:
     replicaCount: 2
     workload: deployment
@@ -43,11 +67,13 @@ services:
     containerPort: 3000
     resources:
       requests:
-        cpu: 150m
-        memory: 256Mi
+        cpu: 200m
+        memory: 384Mi
       limits:
-        cpu: 300m
-        memory: 512Mi
+        cpu: 500m
+        memory: 640Mi
+    pdb:
+      minAvailable: 1
   orders:
     replicaCount: 2
     workload: statefulset
@@ -55,6 +81,20 @@ services:
       repository: orders
       tag: v1.0.0
     containerPort: 3000
+    resources:
+      requests:
+        cpu: 350m
+        memory: 512Mi
+      limits:
+        cpu: 800m
+        memory: 1Gi
+    persistence:
+      enabled: true
+      size: 15Gi
+      accessModes:
+        - ReadWriteOnce
+    pdb:
+      maxUnavailable: 1
   payments:
     replicaCount: 2
     workload: deployment
@@ -62,6 +102,15 @@ services:
       repository: payments
       tag: v1.0.0
     containerPort: 3000
+    resources:
+      requests:
+        cpu: 250m
+        memory: 384Mi
+      limits:
+        cpu: 600m
+        memory: 768Mi
+    pdb:
+      maxUnavailable: 1
   inventory:
     replicaCount: 2
     workload: deployment
@@ -69,6 +118,15 @@ services:
       repository: inventory
       tag: v1.0.0
     containerPort: 3000
+    resources:
+      requests:
+        cpu: 250m
+        memory: 384Mi
+      limits:
+        cpu: 600m
+        memory: 768Mi
+    pdb:
+      minAvailable: 1
   catalog:
     replicaCount: 2
     workload: deployment
@@ -76,15 +134,33 @@ services:
       repository: catalog
       tag: v1.0.0
     containerPort: 3000
+    resources:
+      requests:
+        cpu: 200m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+    pdb:
+      minAvailable: 1
 
 autoscaling:
   enabled: true
   minReplicas: 2
   maxReplicas: 5
   targetCPU: 60
+  throttling:
+    enabled: true
+    metricName: http_requests_throttled_per_second
+    targetAverageValue: "5"
+
+imagePullSecrets: []
+podAnnotations: {}
+podLabels: {}
 
 serviceAccount:
   create: true
+  name: ""
   annotations: {}
 
 podSecurityContext:
@@ -98,6 +174,8 @@ securityContext:
   capabilities:
     drop:
       - ALL
+  seccompProfile:
+    type: RuntimeDefault
 
 networkPolicy:
   enabled: true
@@ -132,4 +210,9 @@ ingressBindings:
     payments: ""
     inventory: ""
     catalog: ""
+
+pdb:
+  enabled: true
+  defaultMinAvailable: 1
+  defaultMaxUnavailable: null
 

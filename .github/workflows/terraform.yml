@@ -1,4 +1,4 @@
-name: terraform
+name: Environment Infrastructure (Terraform)
 
 on:
   pull_request:

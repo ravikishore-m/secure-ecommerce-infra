@@ -1,4 +1,4 @@
-name: bootstrap
+name: Landing Zone Bootstrap & Guardrails
 
 on:
   push:
@@ -33,7 +33,27 @@ env:
   TF_INPUT: false
 
 jobs:
+  static-analysis:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.7.5
+      - name: Terraform Format
+        run: terraform fmt -check -recursive
+        working-directory: base-infrastructure-bootstrap/terraform
+      - name: Tfsec
+        uses: aquasecurity/tfsec-action@v1.0.4
+        with:
+          working_directory: base-infrastructure-bootstrap/terraform
+      - name: Checkov
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: base-infrastructure-bootstrap/terraform
+
   plan-on-push:
+    needs: static-analysis
     if: github.event_name == 'push'
     runs-on: ubuntu-22.04
     strategy:
@@ -57,6 +77,7 @@ jobs:
       - run: terraform plan -out=tfplan
 
   manual:
+    needs: static-analysis
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-22.04
     environment: ${{ inputs.environment }}

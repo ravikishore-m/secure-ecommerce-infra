@@ -1,5 +1,8 @@
 {{- if .Values.autoscaling.enabled }}
 {{- range $name, $svc := .Values.services }}
+{{- if ne (default "deployment" $svc.workload) "deployment" }}
+{{- continue }}
+{{- end }}
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
@@ -18,6 +21,15 @@ spec:
         target:
           type: Utilization
           averageUtilization: {{ $.Values.autoscaling.targetCPU }}
+    {{- if $.Values.autoscaling.throttling.enabled }}
+    - type: Pods
+      pods:
+        metric:
+          name: {{ $.Values.autoscaling.throttling.metricName }}
+        target:
+          type: AverageValue
+          averageValue: {{ $.Values.autoscaling.throttling.targetAverageValue | quote }}
+    {{- end }}
 ---
 {{- end }}
 {{- end }}

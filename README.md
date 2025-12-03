@@ -75,7 +75,7 @@ This repository delivers a production-ready reference implementation for deployi
 ├── policy/                          # OPA/Conftest policies
 ├── scripts/                         # Tooling (docker builds, helpers)
 ├── db/                              # Schema migrations and seed SQL
-└── .github/workflows/               # Bootstrap, infra, and application CI/CD pipelines
+└── .github/workflows/               # Landing Zone Bootstrap, Terraform envs, and Application Delivery CI/CD
 ```
 
 ## Deployment Inputs & Parameters
@@ -86,8 +86,8 @@ Capture these inputs early so every stage (Terraform + Kubernetes) can be execut
 | Input | Description | Where to set |
 | --- | --- | --- |
 | `AWS_NONPROD_TERRAFORM_ROLE` / `AWS_PROD_TERRAFORM_ROLE` | Role ARNs assumed by Terraform plans/applies. | GitHub repo → Settings → Secrets and variables → Actions |
-| `AWS_APP_DEPLOY_ROLE` | Role assumed by the app delivery workflow for ECR pushes + Helm deploys. | GitHub Secrets |
-| `AWS_ACCOUNT_ID` | Used to compose the default ECR registry URL inside workflows. | GitHub Secrets |
+| `AWS_NONPROD_APP_DEPLOY_ROLE` / `AWS_PROD_APP_DEPLOY_ROLE` | Cross-account IAM roles created by the bootstrap stack for building/pushing images and running Helm per environment. | GitHub Secrets |
+| `AWS_NONPROD_ACCOUNT_ID` / `AWS_PROD_ACCOUNT_ID` | Account IDs used to compose each ECR registry URL (mirroring + deployments). | GitHub Secrets |
 | `COSIGN_PRIVATE_KEY` / `COSIGN_PASSWORD` | Required if Cosign keys are stored encrypted for image signing. | GitHub Secrets |
 | `SLACK_WEBHOOK` / PagerDuty key (optional) | Enables ChatOps notifications from workflows. | GitHub Secrets |
 
@@ -114,6 +114,13 @@ Capture these inputs early so every stage (Terraform + Kubernetes) can be execut
 | `dummy_user_email` / `dummy_user_temp_password` | Seed Cognito user credentials for smoke testing. | `terraform.tfvars` (rotate in Secrets Manager after bootstrap) |
 | `alert_emails` | Distribution lists for foundational CloudWatch alarm subscriptions. | `terraform.tfvars` |
 
+#### IAM Outputs to capture
+After `terraform apply` in `base-infrastructure-bootstrap/terraform/envs/<env>`, copy these outputs into your secret manager or GitHub repository secrets:
+
+- `github_actions_role_arn` → feeds `AWS_<ENV>_TERRAFORM_ROLE`
+- `app_deployer_role_arn` → feeds `AWS_<ENV>_APP_DEPLOY_ROLE`
+- `app_irsa_role_arn` → annotate the Helm service account (`serviceAccount.annotations.eks.amazonaws.com/role-arn`) so workloads can reach Secrets Manager/SSM through IRSA.
+
 ### Stage 3 – Application Layer (`terraform/envs/<env>`)
 | Input | Description | Where to set |
 | --- | --- | --- |
@@ -129,6 +136,8 @@ Capture these inputs early so every stage (Terraform + Kubernetes) can be execut
 | `cognito.*` | User pool ID, client ID, region, and callback URIs for the login flow. | Helm values / Argo CD parameters |
 | `ingressBindings.targetGroups` | TargetGroup ARNs exported by the bootstrap stack for ALB bindings. | Helm values (JSON via `--set-json`) |
 | `image.repository` / `tag` | Per-service container image references pointing at the ECR repos created in Stage 3. | Helm values / GitOps |
+| `imagePullSecrets` | Registry secrets (ECR credentials) required for pulling mirrored images. | Helm values |
+| `serviceAccount.annotations.eks.amazonaws.com/role-arn` | IRSA role binding so pods can reach AWS APIs (e.g., Secrets Manager). | Helm values |
 | AWS Load Balancer Controller IAM role | Needed for the controller Helm release to manage TargetGroupBinding CRDs. | EKS IRSA annotations (see Getting Started step 5) |
 
 > 📘 All module variables are documented inline (`variables.tf` files) and in `docs/` for deeper explanations.
@@ -150,7 +159,7 @@ Capture these inputs early so every stage (Terraform + Kubernetes) can be execut
    terraform init
    terraform apply
    ```
-   Repeat for `prod` when ready (or run `.github/workflows/bootstrap.yml`). This stage stands up the hosted zone + ACM, VPC/TGW, interface endpoints, EKS (with namespaces), Cognito, ingress ALB/WAF, and IAM deployer roles.
+   Repeat for `prod` when ready (or run `Landing Zone Bootstrap & Guardrails` in `.github/workflows/bootstrap.yml`). This stage stands up the hosted zone + ACM, VPC/TGW, interface endpoints, EKS (with namespaces), Cognito, ingress ALB/WAF, and IAM deployer roles.
 
 3. **Configure AWS providers**  
    - Export AWS profiles or assume roles matching `assume_role_arn` in each environment (`SharedServicesTerraform`, `ProdTerraform`).
@@ -169,6 +178,9 @@ Capture these inputs early so every stage (Terraform + Kubernetes) can be execut
    kubectl apply -f k8s/namespaces/bootstrap.yaml
    kubectl apply -k k8s/addons/calico
 
+   # namespace-level quotas + default requests/limits
+   kubectl apply -f base-infrastructure-bootstrap/k8s/resource-quotas/<env>.yaml
+
    # AWS Load Balancer Controller CRDs (required for TargetGroupBinding)
    helm repo add eks https://aws.github.io/eks-charts
    helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
@@ -178,7 +190,7 @@ Capture these inputs early so every stage (Terraform + Kubernetes) can be execut
    ```
 
 6. **Deploy services**  
-   - Build and push microservice images via `.github/workflows/app-delivery.yml` or `scripts/build.sh`.  
+   - Build and push microservice images via `Application Delivery & Promotion` (`.github/workflows/app-delivery.yml`) or `scripts/build.sh`.  
    - Populate the Helm values for `global.domain`, `database.*`, and `cognito.*` using outputs from the app/core Terraform (`terraform output`) and the bootstrap stack (Cognito/RDS endpoints).  
    - Export ALB target group ARNs from the bootstrap state and feed them to Helm/Argo:  
      ```bash
@@ -190,6 +202,74 @@ Capture these inputs early so every stage (Terraform + Kubernetes) can be execut
        --set-json ingressBindings.targetGroups="$(cat /tmp/tg.json)"
      ```
    - Use Argo CD or Flux for GitOps sync if preferred.
+   - Promote the vetted digest into the prod registry via `scripts/promote-image.sh <src-registry> <dest-registry> ecom-<service> <tag>` (the GitHub workflow calls this script automatically after nonprod deploys succeed).
+
+## Cluster Operations & Deployments
+
+### Calico & network policy workflow
+1. Mirror the Calico operator images (see *Image mirroring* below) so EKS never pulls directly from the internet.
+2. Apply namespaces and Pod Security Standards:
+   ```bash
+   kubectl apply -f k8s/namespaces/bootstrap.yaml
+   ```
+3. Deploy Calico via kustomize (installs the operator + project-specific custom resources):
+   ```bash
+   kubectl apply -k k8s/addons/calico
+   kubectl get tigerastatus default --watch
+   ```
+4. Re-apply whenever you bump the version in `k8s/addons/calico/kustomization.yaml`.
+
+### Namespace quotas, default resources & pod disruption budgets
+- Apply `base-infrastructure-bootstrap/k8s/resource-quotas/<env>.yaml` right after namespaces exist to enforce `ResourceQuota` + `LimitRange` objects for `ecommerce`, `observability`, and `networking`. These YAMLs live beside the bootstrap Terraform so they can be versioned per environment.
+- LimitRanges ensure every pod/request has sensible defaults (and caps runaway CPU/memory), while the Helm chart sets per-service `resources` and PodDisruptionBudgets (`services.<name>.pdb`) so voluntary disruptions never take the entire tier offline.
+
+### Rolling updates, persistence & throttling-aware autoscaling
+- Deployments use an explicit RollingUpdate strategy (`rollingUpdate.maxSurge` / `maxUnavailable`) and StatefulSets expose `podManagementPolicy` + `rollingUpdate.partition`.
+- Stateful workloads (e.g., `orders`) now attach PVCs via `.services.orders.persistence` so write-ahead cache survives restarts.
+- HorizontalPodAutoscalers include an optional throttling metric hook (`autoscaling.throttling.*`) so you can scale ReplicaSets when Prometheus exposes `http_requests_throttled_per_second`, not just CPU utilization.
+
+### Image mirroring & registry controls
+- Run `scripts/mirror-images.sh` (or let the `Application Delivery & Promotion` workflow do it) to copy hardened base images from Docker Hub → ECR (`mirrors/node` + `mirrors/nginx`).  
+- The `scripts/build.sh` helper and GitHub Actions build step inject those mirrored tags through Docker build args so workloads never reference the public internet.
+- Create a pull secret per namespace so the cluster authenticates against your ECR registry:
+  ```bash
+  aws ecr get-login-password --region <region> \
+    | kubectl create secret docker-registry ecr-registry \
+      --namespace ecommerce \
+      --docker-server=<account>.dkr.ecr.<region>.amazonaws.com \
+      --docker-username=AWS \
+      --docker-password-stdin
+  ```
+- Reference that secret via `imagePullSecrets` in `k8s/helm/platform-chart/values.yaml` or the env-specific overrides.
+- Promote artifacts between registries via `scripts/promote-image.sh <source> <destination> <repository> <tag>` (used automatically by the GitHub workflow after nonprod deployments pass).
+
+### IRSA + pod security defaults
+- Bootstrap now creates an `app_irsa_role_arn` bound to `system:serviceaccount:ecommerce:*`. Annotate the Helm service account:
+  ```yaml
+  serviceAccount:
+    annotations:
+      eks.amazonaws.com/role-arn: "<app_irsa_role_arn>"
+  ```
+- Namespaces in `k8s/namespaces/bootstrap.yaml` ship with `pod-security.kubernetes.io/*` labels (`restricted` for `ecommerce`, `baseline`/`privileged` for system namespaces) to enforce Pod Security Standards at admission time.
+- The Helm chart defaults to `runAsNonRoot`, drops all Linux capabilities, and applies `seccompProfile: RuntimeDefault`.
+
+### Helm release workflow (nonprod & prod)
+1. Populate `k8s/envs/nonprod.values.yaml` and `k8s/envs/prod.values.yaml` with environment-specific domains, RDS endpoints, Cognito IDs, IRSA role ARN, and `imagePullSecrets`.
+2. Manual deploy (nonprod example):
+   ```bash
+   export AWS_REGION=us-east-1
+   aws eks update-kubeconfig --name ecommerce-platform-nonprod-eks --region $AWS_REGION
+   helm upgrade --install ecommerce k8s/helm/platform-chart \
+     --namespace ecommerce --create-namespace \
+     --values k8s/envs/nonprod.values.yaml \
+     --set global.imageRegistry=<nonprod-account>.dkr.ecr.$AWS_REGION.amazonaws.com \
+     --wait --atomic
+   ```
+3. Repeat for prod with the prod cluster and values file. The `Application Delivery & Promotion` workflow now deploys **both** environments after images are built and signed, so the manual command above is only needed for break-glass or local testing.
+
+### CI/CD safety rails
+- **Landing Zone Bootstrap & Guardrails** (`.github/workflows/bootstrap.yml`) now runs `terraform fmt`, `tfsec`, and Checkov before every plan/apply to catch misconfigurations earlier.
+- **Application Delivery & Promotion** (`.github/workflows/app-delivery.yml`) mirrors base images, builds/pushes per-environment images, promotes digests to prod, and runs Helm upgrades against nonprod and prod with the correct IAM roles.
 
 ### Security Highlights
 - Defence-in-depth with layered network segmentation, WAF, Shield, Security Groups, and NACLs.

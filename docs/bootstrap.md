@@ -1,44 +1,50 @@
-## Terraform Backend Bootstrap
+## Terraform Bootstrap & Remote State
 
-Before running any workload environment, apply the helper in `base-infrastructure-bootstrap/terraform/bootstrap` (or follow the manual commands below) to create the remote state, centralized artifact bucket, and DynamoDB locking resources inside the **shared-services** account.
+All backend prerequisites (state buckets, artifact store, lock table, GitHub OIDC, and deployer roles) are codified in `base-infrastructure-bootstrap/terraform/bootstrap`. You no longer need to create buckets or roles by hand—just run Terraform once per shared-services account.
 
-### 1. Create S3 Buckets
+### 1. Apply the bootstrap stack
 ```bash
-aws s3api create-bucket \
-  --bucket ecommerce-platform-tfstate \
-  --region us-east-1 \
-  --acl private \
-  --object-lock-enabled-for-bucket
-
-aws s3api create-bucket \
-  --bucket ecommerce-platform-artifacts \
-  --region us-east-1 \
-  --acl private
+cd base-infrastructure-bootstrap/terraform/bootstrap
+terraform init
+terraform apply \
+  -var='region=us-east-1' \
+  -var='trusted_role_arns=["arn:aws:iam::111111111111:role/SharedServicesTerraform","arn:aws:iam::222222222222:role/ProdTerraform"]'
 ```
-- Enable default encryption (SSE-KMS) with a dedicated CMK.
-- Turn on versioning and intelligent tiering.
-- Attach bucket policy to allow only the Terraform role and AWS Config to read.
+This provisions:
+- `ecommerce-platform-tfstate` S3 bucket (versioned, SSE-KMS) + DynamoDB lock table.
+- `ecommerce-platform-artifacts` bucket for CI logs/SBOMs/Velero backups.
+- GitHub OIDC provider (optional) and baseline IAM roles for Terraform + app delivery.
 
-### 2. Create DynamoDB Lock Table
+### 2. Capture outputs
+Record these outputs in your password manager / GitHub repository secrets:
+
+| Output | Purpose |
+| --- | --- |
+| `github_actions_role_arn` | Used as `AWS_<ENV>_TERRAFORM_ROLE` for `Environment Infrastructure (Terraform)` (`.github/workflows/terraform.yml`) and `Landing Zone Bootstrap & Guardrails` (`bootstrap.yml`). |
+| `app_deployer_role_arn` | Used as `AWS_<ENV>_APP_DEPLOY_ROLE` so GitHub Actions can build/push from ECR and run Helm. |
+| `app_irsa_role_arn` | Annotate the Helm service account (`eks.amazonaws.com/role-arn`) so pods can read Secrets Manager/SSM. |
+
+The bootstrap outputs also include the remote-state bucket name and prefix that workload envs reference through `bootstrap_state_bucket` / `bootstrap_state_prefix`.
+
+### 3. GitHub configuration
+1. Add the OIDC provider under **Settings → Security → OpenID Connect** if Terraform created it.
+2. Create the secrets listed in `README.md` (Terraform roles, app deploy roles, per-account IDs, Cosign keys, optional Slack/PagerDuty).
+3. Protect `main` branch with required reviews so Terraform plans run before merge.
+
+### 4. Guardrails enabled by default
+Running the bootstrap stack also enables:
+- AWS Config recorder + delivery channel with encrypted S3 storage.
+- GuardDuty + Security Hub standards subscriptions (CIS, AWS FSBP, PCI).  
+- AWS WAF (managed rules) whose ARN feeds the ingress module.  
+Keep tagging consistent (`Environment`, `Project`, `Owner`) so Config/Cost reporting stays accurate.
+
+### 5. Apply namespace quotas per environment
+Each environment ships with a curated set of `ResourceQuota` + `LimitRange` manifests under `base-infrastructure-bootstrap/k8s/resource-quotas/<env>.yaml`. After EKS, namespaces, and Calico are in place, run:
+
 ```bash
-aws dynamodb create-table \
-  --table-name tf-state-locks \
-  --attribute-definitions AttributeName=LockID,AttributeType=S \
-  --key-schema AttributeName=LockID,KeyType=HASH \
-  --billing-mode PAY_PER_REQUEST \
-  --sse-specification Enabled=true,SSEType=KMS
+kubectl apply -f base-infrastructure-bootstrap/k8s/resource-quotas/nonprod.yaml
+# repeat for prod when ready
 ```
 
-### 3. Provision IAM Roles
-- `role/SharedServicesTerraform` (shared account) and `role/ProdTerraform` (prod account).
-- Trust policy allows GitHub Actions OIDC provider (`token.actions.githubusercontent.com`) with repo constraint.
-- Inline policy permits `s3:GetObject`, `dynamodb:PutItem`, `sts:AssumeRole` into workload accounts.
-
-### 4. Configure GitHub OIDC
-- Add AWS provider under **Settings → Security → OIDC**.
-- Update `.github/workflows/terraform.yml` with the AWS role ARN(s).
-
-### 5. Tagging & Guardrails
-- Tag all resources with `Environment`, `CostCenter`, `Owner`, `DataClassification`.
-- Enable AWS Config, GuardDuty, Security Hub before Terraform apply for consistent baselines.
+These guardrails enforce default CPU/memory requests and cap the number of pods/PVCs per namespace so runaway workloads cannot starve the cluster.
 
