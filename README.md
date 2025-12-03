@@ -98,7 +98,7 @@ Capture these inputs early so every stage (Terraform + Kubernetes) can be execut
 | `project_name` | Prefix applied to S3 buckets, IAM roles, and tags. | `terraform.tfvars` |
 | `state_bucket_name` | Global, unique S3 bucket for Terraform remote state. | `terraform.tfvars` |
 | `artifact_bucket_name` | Bucket for CI/CD logs, SBOMs, Velero backups. | `terraform.tfvars` |
-| `lock_table_name` | DynamoDB table used for Terraform state locking. | `terraform.tfvars` |
+| `state_lock_retention_days` | Days to keep each Terraform state version immutable via S3 Object Lock. | `terraform.tfvars` |
 | `trusted_role_arns` | IAM role ARNs allowed to read/write the remote state bucket. | `terraform.tfvars` |
 
 ### Stage 2 – Foundation Stack (`base-infrastructure-bootstrap/terraform/envs/<env>`)
@@ -150,8 +150,10 @@ After `terraform apply` in `base-infrastructure-bootstrap/terraform/envs/<env>`,
    terraform apply -var='trusted_role_arns=["arn:aws:iam::111111111111:role/SharedServicesTerraform","arn:aws:iam::222222222222:role/ProdTerraform"]'
    ```
    This provisions:
-   - `ecommerce-platform-tfstate` S3 bucket (SSE-KMS) + `ecommerce-platform-tf-locks` DynamoDB table  
+   - `ecommerce-platform-tfstate` S3 bucket (SSE-KMS + Object Lock honoring `state_lock_retention_days` of immutability)  
    - `ecommerce-platform-artifacts` bucket for CI/CD logs, SBOMs, and Velero data
+
+   The stack also creates the `alias/ecommerce-platform/tf-state` KMS alias, which every Terraform backend consumes via the `kms_key_id` setting.
 
 2. **Deploy the foundation stack (per environment)**  
    ```bash

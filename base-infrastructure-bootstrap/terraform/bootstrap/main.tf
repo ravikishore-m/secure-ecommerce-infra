@@ -9,6 +9,7 @@ locals {
   }
 }
 
+# KMS key encrypts every Terraform state object and related metadata.
 resource "aws_kms_key" "tf_state" {
   description             = "KMS key for ${var.project_name} Terraform state"
   deletion_window_in_days = 10
@@ -16,19 +17,37 @@ resource "aws_kms_key" "tf_state" {
   tags                    = local.tags
 }
 
+# Friendly alias so backend configs can reference the key without hard-coding an ARN.
 resource "aws_kms_alias" "tf_state" {
   name          = "alias/${var.project_name}/tf-state"
   target_key_id = aws_kms_key.tf_state.key_id
 }
 
+# Versioned S3 bucket that stores Terraform state files with object-lock protection.
 resource "aws_s3_bucket" "tf_state" {
-  bucket = var.state_bucket_name
+  bucket              = var.state_bucket_name
+  object_lock_enabled = true
 
   tags = merge(local.tags, {
     Purpose = "terraform-state"
   })
 }
 
+# Immutable retention configuration prevents accidental or malicious state deletion.
+resource "aws_s3_bucket_object_lock_configuration" "tf_state" {
+  bucket = aws_s3_bucket.tf_state.id
+
+  rule {
+    default_retention {
+      mode = "GOVERNANCE"
+      days = var.state_lock_retention_days
+    }
+  }
+
+  depends_on = [aws_s3_bucket_versioning.tf_state]
+}
+
+# Versioning is required for object-lock and enables point-in-time recovery.
 resource "aws_s3_bucket_versioning" "tf_state" {
   bucket = aws_s3_bucket.tf_state.id
 
@@ -37,6 +56,7 @@ resource "aws_s3_bucket_versioning" "tf_state" {
   }
 }
 
+# Ensure every object is encrypted with the dedicated KMS key.
 resource "aws_s3_bucket_server_side_encryption_configuration" "tf_state" {
   bucket = aws_s3_bucket.tf_state.id
 
@@ -48,6 +68,7 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "tf_state" {
   }
 }
 
+# Block any accidental public exposure of the Terraform state bucket.
 resource "aws_s3_bucket_public_access_block" "tf_state" {
   bucket = aws_s3_bucket.tf_state.id
 
@@ -57,6 +78,7 @@ resource "aws_s3_bucket_public_access_block" "tf_state" {
   restrict_public_buckets = true
 }
 
+# Only trusted roles using TLS may read/write Terraform state objects.
 data "aws_iam_policy_document" "state_bucket" {
   statement {
     sid    = "AllowTrustedRoles"
@@ -83,30 +105,13 @@ data "aws_iam_policy_document" "state_bucket" {
   }
 }
 
+# Attach the bucket policy assembled above.
 resource "aws_s3_bucket_policy" "tf_state" {
   bucket = aws_s3_bucket.tf_state.id
   policy = data.aws_iam_policy_document.state_bucket.json
 }
 
-resource "aws_dynamodb_table" "locks" {
-  name         = var.lock_table_name
-  billing_mode = "PAY_PER_REQUEST"
-
-  attribute {
-    name = "LockID"
-    type = "S"
-  }
-
-  server_side_encryption {
-    enabled     = true
-    kms_key_arn = aws_kms_key.tf_state.arn
-  }
-
-  tags = merge(local.tags, {
-    Purpose = "terraform-locking"
-  })
-}
-
+# Artifact bucket stores CI/CD evidence (SBOMs, logs, etc.) for auditing.
 resource "aws_s3_bucket" "artifacts" {
   bucket = var.artifact_bucket_name
 
@@ -115,6 +120,7 @@ resource "aws_s3_bucket" "artifacts" {
   })
 }
 
+# Lifecycle policy keeps artifact storage affordable while retaining history.
 resource "aws_s3_bucket_lifecycle_configuration" "artifacts" {
   bucket = aws_s3_bucket.artifacts.id
 

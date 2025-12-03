@@ -43,6 +43,7 @@ Service Control Policies enforce: mandatory tagging, KMS encryption, blocked reg
   - Credentials stored in AWS Secrets Manager and mounted into Kubernetes via secrets.  
 - Amazon S3 buckets for remote state, Config logs, and artifacts (encryption + versioning).  
 - Cart cache backed by Redis (statefulset) inside the cluster; swap to ElastiCache if managed caching is required.
+- Terraform remote state is stored in an object-lock enabled S3 bucket encrypted by `alias/ecommerce-platform/tf-state`, preventing tampering and satisfying audit requirements.
 
 ### Observability
 - AWS Distro for OpenTelemetry (ADOT) DaemonSet exporting:

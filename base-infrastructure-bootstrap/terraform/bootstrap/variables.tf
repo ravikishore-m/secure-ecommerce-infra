@@ -22,15 +22,15 @@ variable "artifact_bucket_name" {
   default     = "ecommerce-platform-artifacts"
 }
 
-variable "lock_table_name" {
-  description = "DynamoDB table for Terraform state locks"
-  type        = string
-  default     = "ecommerce-platform-tf-locks"
-}
-
 variable "trusted_role_arns" {
   description = "Roles allowed to access the remote state bucket"
   type        = list(string)
   default     = []
+}
+
+variable "state_lock_retention_days" {
+  description = "Number of days to retain each Terraform state object via S3 Object Lock (immutability window)"
+  type        = number
+  default     = 1
 }
 

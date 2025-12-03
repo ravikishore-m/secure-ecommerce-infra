@@ -1,6 +1,6 @@
 ## Terraform Bootstrap & Remote State
 
-All backend prerequisites (state buckets, artifact store, lock table, GitHub OIDC, and deployer roles) are codified in `base-infrastructure-bootstrap/terraform/bootstrap`. You no longer need to create buckets or roles by hand—just run Terraform once per shared-services account.
+All backend prerequisites (object-locked state buckets, artifact store, GitHub OIDC, and deployer roles) are codified in `base-infrastructure-bootstrap/terraform/bootstrap`. You no longer need to create buckets or roles by hand—just run Terraform once per shared-services account.
 
 ### 1. Apply the bootstrap stack
 ```bash
@@ -11,9 +11,11 @@ terraform apply \
   -var='trusted_role_arns=["arn:aws:iam::111111111111:role/SharedServicesTerraform","arn:aws:iam::222222222222:role/ProdTerraform"]'
 ```
 This provisions:
-- `ecommerce-platform-tfstate` S3 bucket (versioned, SSE-KMS) + DynamoDB lock table.
+- `ecommerce-platform-tfstate` S3 bucket (versioned, SSE-KMS, Object Lock) that backs every Terraform backend.
 - `ecommerce-platform-artifacts` bucket for CI logs/SBOMs/Velero backups.
 - GitHub OIDC provider (optional) and baseline IAM roles for Terraform + app delivery.
+
+> ℹ️ Object Lock retention defaults to `state_lock_retention_days = 1` (governance mode) and the bootstrap stack publishes the `alias/ecommerce-platform/tf-state` KMS alias so every backend can set `kms_key_id` without hard-coding an account-specific ARN.
 
 ### 2. Capture outputs
 Record these outputs in your password manager / GitHub repository secrets:

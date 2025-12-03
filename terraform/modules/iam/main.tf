@@ -69,18 +69,6 @@ data "aws_iam_policy_document" "github_inline" {
   }
 
   statement {
-    sid    = "TerraformLockTable"
-    effect = "Allow"
-    actions = [
-      "dynamodb:DescribeTable",
-      "dynamodb:GetItem",
-      "dynamodb:PutItem",
-      "dynamodb:DeleteItem"
-    ]
-    resources = ["arn:aws:dynamodb:*:*:table/tf-state-locks"]
-  }
-
-  statement {
     sid     = "AssumeWorkloadRoles"
     effect  = "Allow"
     actions = ["sts:AssumeRole"]
